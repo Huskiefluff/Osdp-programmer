@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "osdp-reader-programmer"
+dynamic = ["version"]
+description = "Windows tool to find, program and test OSDP access control readers (e.g. Veridt Stealth) for Lenel OnGuard"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyserial>=3.5",
+    "cryptography>=41",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyinstaller>=6"]
+interop = ["libosdp>=3.0"]
+
+[project.scripts]
+readerprog = "readerprog.cli:main"
+
+[project.gui-scripts]
+readerprog-gui = "readerprog.gui:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "readerprog.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
