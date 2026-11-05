@@ -17,9 +17,9 @@ echo Running tests...
 python -m pytest -q
 if errorlevel 1 goto :fail
 
-pyinstaller --noconfirm --clean --onefile --windowed --name OSDPReaderProgrammer --paths src launch_gui.py
+pyinstaller --noconfirm --clean --onefile --windowed --name OSDPReaderProgrammer --paths src --collect-data netaddr launch_gui.py
 if errorlevel 1 goto :fail
-pyinstaller --noconfirm --clean --onefile --console --name readerprog --paths src launch_cli.py
+pyinstaller --noconfirm --clean --onefile --console --name readerprog --paths src --collect-data netaddr launch_cli.py
 if errorlevel 1 goto :fail
 
 echo.

@@ -102,3 +102,74 @@ def test_no_reader_reports_clearly(app):
     app.find_reader()
     assert pump(app, lambda: any(d[0] == "showwarning" for d in app.dialogs), timeout=60), app.dialogs
     assert "No reader answered" in text(app.info_text)
+
+
+def _select(app, name):
+    for iid, (kind, obj) in app._tree_items.items():
+        if kind == "command" and obj[0].name == name:
+            app.cmd_tree.selection_set(iid)
+            app.root.update()
+            return
+    raise AssertionError(f"{name} not in command tree")
+
+
+def test_commands_tab(app, tmp_path, monkeypatch):
+    from readerprog import gui
+    from readerprog.commands import CommandLibrary, UserCommand
+    from readerprog.sim import SIM_VENDOR
+
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **k: True)
+
+    _select(app, "Buzzer")
+    app.param_vars["count"].set("2")
+    app.root.update()
+    assert "osdp_BUZ" in app.cmd_preview.cget("text")
+    app.send_selected_command()
+    assert pump(app, lambda: "ACK" in text(app.cmd_text)), text(app.cmd_text)
+    app.param_vars["count"].set("999")
+    app.root.update()
+    assert "Fix this first" in app.cmd_preview.cget("text")
+
+    _select(app, "Manufacturer command (osdp_MFG)")
+    app.param_vars["vendor"].set(SIM_VENDOR.hex())
+    app.param_vars["payload"].set("AA")
+    app.send_selected_command()
+    assert pump(app, lambda: "Manufacturer reply" in text(app.cmd_text)), text(app.cmd_text)
+
+    # Add, run, edit, export, delete and re-import a user command.
+    uc = UserCommand(name="Sim echo", vendor="Veridt", code="80", data=SIM_VENDOR.hex() + " 01", notes="test")
+    app._ask_user_command = lambda existing, vendor="Other": uc
+    app.new_user_command()
+    lib_path = CommandLibrary.default_path()
+    assert lib_path.exists() and "Sim echo" in lib_path.read_text()
+    _select(app, "Sim echo")
+    assert app.selected_user == uc
+    app.send_selected_command()
+    assert pump(app, lambda: text(app.cmd_text).count("Manufacturer reply") >= 2), text(app.cmd_text)
+
+    edited = UserCommand(name="Sim echo 2", vendor="Veridt", code="80", data=SIM_VENDOR.hex() + " 02")
+    app._ask_user_command = lambda existing, vendor="Other": edited
+    app.edit_user_command()
+    assert [c.name for c in app.library.commands] == ["Sim echo 2"]
+
+    export = tmp_path / "shared.json"
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename", lambda **k: str(export))
+    app.export_library()
+    assert export.exists()
+    _select(app, "Sim echo 2")
+    app.delete_user_command()
+    assert app.library.commands == []
+    monkeypatch.setattr(gui.filedialog, "askopenfilename", lambda **k: str(export))
+    app.import_library()
+    assert [c.name for c in app.library.commands] == ["Sim echo 2"]
+    assert not [d for d in app.dialogs if d[0] == "showerror"], app.dialogs
+
+    # The add/edit dialog validates before saving.
+    dlg = gui.UserCommandDialog(app.root, None, vendor="HID", vendor_code="00 06 8E", modal=False)
+    dlg.name_var.set("Bad")
+    dlg.code_var.set("12")
+    dlg.save()
+    assert dlg.result is None and any(d[0] == "showerror" for d in app.dialogs)
+    dlg.code_var.set("80")
+    dlg.save()
+    assert dlg.result is not None and dlg.result.vendor == "HID" and dlg.result.data.startswith("00 06 8E")

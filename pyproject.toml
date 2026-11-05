@@ -11,6 +11,7 @@ requires-python = ">=3.9"
 dependencies = [
     "pyserial>=3.5",
     "cryptography>=41",
+    "netaddr>=0.10",
 ]
 
 [project.optional-dependencies]

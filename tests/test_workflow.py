@@ -133,8 +133,9 @@ def test_keyset_requires_secure_channel():
 def test_unknown_command_nak():
     sim, bus = make()
     r = Reader(bus, 1)
-    reply = r.manufacturer(b"\x5A\x5A\x5A", b"\x01")
+    reply = r.manufacturer(b"\x00\x11\x12", b"\x01")  # a vendor code the simulator doesn't own
     assert reply.code == C.REPLY_NAK and reply.data[0] == 0x03
+    assert r.command(0x7E, b"", raise_nak=False).code == C.REPLY_NAK
 
 
 def test_fascn_200_decode():

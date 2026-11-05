@@ -10,6 +10,8 @@ from typing import Optional
 
 from . import APP_NAME, __version__
 from . import programmer as P
+from .commands import CommandLibrary, all_definitions, find_definition
+from .osdp.decode import describe_reply
 from .osdp import constants as C
 from .osdp.cp import SCAN_BAUD_ORDER, Bus, OsdpError, Reader, scan
 from .osdp.secure import SecureChannelError, parse_key
@@ -161,7 +163,58 @@ def cmd_send(args) -> int:
     code = int(args.code, 0)
     data = bytes.fromhex(args.data.replace(" ", "")) if args.data else b""
     reply = reader.command(code, data, raise_nak=False)
-    print(f"{reply.name}: {reply.data.hex(' ').upper()}")
+    print(f"{reply.name}: {describe_reply(reply.code, reply.data)}")
+    return 0
+
+
+def _library() -> CommandLibrary:
+    try:
+        return CommandLibrary.load()
+    except Exception as exc:
+        print(f"WARNING: could not read your command library: {exc}", file=sys.stderr)
+        return CommandLibrary()
+
+
+def cmd_commands(args) -> int:
+    group = None
+    for d in all_definitions(_library()):
+        if d.group != group:
+            group = d.group
+            print(f"\n[{group}]")
+        flag = "  (changes settings)" if d.changes_settings else ""
+        print(f"  {d.name}{flag}")
+        for prm in d.params:
+            choices = f" one of: {', '.join(prm.choices)}" if prm.choices else ""
+            print(f"      --set {prm.key}=...   {prm.label} (default {prm.default_display()}){choices}")
+    return 0
+
+
+def cmd_run(args) -> int:
+    d = find_definition(args.name, _library())
+    values = d.defaults()
+    for item in args.set or []:
+        key, sep, value = item.partition("=")
+        if not sep or key not in values:
+            raise ValueError(f"--set {item}: '{d.name}' takes {', '.join(values) or 'no settings'}")
+        values[key] = value
+    data = d.payload(values)
+    print(f"Sending {d.preview(values)}")
+    if d.changes_settings and not args.yes:
+        print("This command can change the reader's configuration. Add --yes to send it.")
+        return 2
+    if d.secure and args.key is None:
+        raise ValueError("This command needs a secure channel: add --key (32 hex digits or 'default')")
+    reply = _reader(args).command(d.code, data, raise_nak=False)
+    print(f"{reply.name}: {describe_reply(reply.code, reply.data)}")
+    return 0 if reply.code != 0x41 else 1
+
+
+def cmd_vendor(args) -> int:
+    from .osdp.decode import parse_hex
+    from .osdp.vendors import vendor_name
+
+    code = parse_hex(args.code, name="vendor code", length=3)
+    print(f"{'-'.join(f'{b:02X}' for b in code)}: {vendor_name(code)}")
     return 0
 
 
@@ -229,6 +282,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seconds", type=int, default=0, help="stop after N seconds (default: until Ctrl+C)")
     p.add_argument("--key")
     p.set_defaults(func=cmd_watch)
+
+    sub.add_parser("commands", help="list built-in and saved commands").set_defaults(func=cmd_commands)
+
+    p = sub.add_parser("vendor", help="look up who owns an OSDP vendor code, e.g. vendor 00-11-12")
+    p.add_argument("code", help="3-byte vendor code as shown by 'info'")
+    p.set_defaults(func=cmd_vendor)
+
+    p = common(sub.add_parser("run", help="send a command from the library, e.g. run Buzzer --set count=3"))
+    p.add_argument("name", help="command name as shown by 'readerprog commands'")
+    p.add_argument("--set", action="append", metavar="KEY=VALUE", help="command setting (repeatable)")
+    p.add_argument("--yes", action="store_true", help="confirm commands that change reader settings")
+    p.add_argument("--key")
+    p.set_defaults(func=cmd_run)
 
     p = common(sub.add_parser("send", help="send a raw OSDP command (advanced)"))
     p.add_argument("code", help="command code, e.g. 0x61")

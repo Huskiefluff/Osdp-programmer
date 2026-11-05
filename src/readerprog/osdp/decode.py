@@ -31,9 +31,15 @@ class DeviceId:
     def serial_hex(self) -> str:
         return f"{self.serial_number:08X}"
 
+    @property
+    def vendor_name(self) -> str:
+        from .vendors import vendor_name
+
+        return vendor_name(self.vendor_code)
+
     def describe(self) -> str:
         return (
-            f"Vendor code (OUI): {self.vendor_hex}\n"
+            f"Vendor code (OUI): {self.vendor_hex} ({self.vendor_name})\n"
             f"Model: {self.model}   Version: {self.version}\n"
             f"Serial number: {self.serial_number} (0x{self.serial_hex})\n"
             f"Firmware: {self.firmware}"
@@ -325,7 +331,112 @@ def encode_buzzer(reader: int = 0, tone: int = 2, on_time: int = 5, off_time: in
     return bytes([reader, tone, on_time, off_time, count])
 
 
-def encode_text(text: str, reader: int = 0, row: int = 1, col: int = 1, temp_time: int = 0) -> bytes:
+def encode_text(text: str, reader: int = 0, row: int = 1, col: int = 1, temp_time: int = 0,
+                mode: Optional[int] = None) -> bytes:
+    """osdp_TEXT. mode: 1=permanent no wrap, 2=permanent wrap, 3=temporary no wrap, 4=temporary wrap."""
     raw = text.encode("ascii", "replace")[:32]
-    command = 3 if temp_time else 1  # 1=permanent, no wrap; 3=temporary, no wrap
-    return bytes([reader, command, temp_time, row, col, len(raw)]) + raw
+    if mode is None:
+        mode = 3 if temp_time else 1
+    if mode not in (1, 2, 3, 4):
+        raise ValueError("text mode must be 1-4")
+    return bytes([reader, mode, temp_time, row, col, len(raw)]) + raw
+
+
+OUTPUT_ACTIONS = {
+    0: "No change",
+    1: "Permanent OFF (cancel any timed action)",
+    2: "Permanent ON (cancel any timed action)",
+    3: "Permanent OFF (let a timed action finish)",
+    4: "Permanent ON (let a timed action finish)",
+    5: "Temporary ON for the timer, then OFF",
+    6: "Temporary OFF for the timer, then ON",
+}
+
+
+def encode_output(output: int = 0, action: int = 2, timer: int = 0) -> bytes:
+    """osdp_OUT record: output number, control code, timer (100 ms units, LSB first)."""
+    if action not in OUTPUT_ACTIONS:
+        raise ValueError("output action must be 0-6")
+    if not 0 <= timer <= 0xFFFF:
+        raise ValueError("timer must be 0-65535")
+    return bytes([output, action, timer & 0xFF, timer >> 8])
+
+
+def encode_u16(value: int) -> bytes:
+    if not 0 <= value <= 0xFFFF:
+        raise ValueError("value must be 0-65535")
+    return int(value).to_bytes(2, "little")
+
+
+def parse_hex(text: str, *, name: str = "data", length: Optional[int] = None) -> bytes:
+    """Parse hex typed by a person: spaces, dashes, colons and 0x prefixes are allowed."""
+    cleaned = text.replace("0x", "").replace("0X", "")
+    cleaned = "".join(ch for ch in cleaned if ch not in " -:_,\t\n")
+    if len(cleaned) % 2:
+        raise ValueError(f"{name}: odd number of hex digits")
+    try:
+        value = bytes.fromhex(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{name}: not valid hexadecimal") from exc
+    if length is not None and len(value) != length:
+        raise ValueError(f"{name}: must be exactly {length} bytes")
+    return value
+
+
+def encode_mfg(vendor_code: bytes, payload: bytes) -> bytes:
+    """osdp_MFG: the 3-byte vendor code followed by the manufacturer's own payload."""
+    if len(vendor_code) != 3:
+        raise ValueError("vendor code must be 3 bytes, e.g. 00 11 12")
+    return bytes(vendor_code) + bytes(payload)
+
+
+# ==========================================================================
+# Generic reply description (used by the command console)
+# ==========================================================================
+def _io_states(data: bytes, what: str) -> str:
+    if not data:
+        return f"no {what}s reported"
+    names = {0: "inactive", 1: "active"}
+    return ", ".join(f"{what} {i}: {names.get(b, f'0x{b:02X}')}" for i, b in enumerate(data))
+
+
+def describe_reply(code: int, data: bytes) -> str:
+    """One readable description of any reply a reader can send."""
+    try:
+        if code == C.REPLY_ACK:
+            return "ACK - command accepted"
+        if code == C.REPLY_NAK:
+            return decode_nak(data)
+        if code == C.REPLY_PDID:
+            return decode_pdid(data).describe()
+        if code == C.REPLY_PDCAP:
+            return "\n".join(c.describe() for c in decode_pdcap(data))
+        if code == C.REPLY_LSTATR:
+            return decode_lstatr(data).describe()
+        if code == C.REPLY_ISTATR:
+            return _io_states(data, "Input")
+        if code == C.REPLY_OSTATR:
+            return _io_states(data, "Output")
+        if code == C.REPLY_RSTATR:
+            return "Reader status: " + ", ".join(decode_rstatr(data))
+        if code == C.REPLY_COM:
+            com = decode_com(data)
+            return f"Communication settings now: address {com.address}, {com.baud} baud"
+        if code == C.REPLY_RAW:
+            return decode_raw(data).describe()
+        if code == C.REPLY_FMT:
+            return decode_fmt(data).describe()
+        if code == C.REPLY_KEYPAD:
+            return decode_keypad(data)
+        if code == C.REPLY_BUSY:
+            return "BUSY - reader is busy, try again"
+        if code == C.REPLY_MFGREP and len(data) >= 3:
+            from .vendors import vendor_name
+
+            vendor = "-".join(f"{b:02X}" for b in data[:3])
+            body = data[3:].hex(" ").upper() or "(no data)"
+            return f"Manufacturer reply from vendor {vendor} ({vendor_name(data[:3])}): {body}"
+    except DecodeError as exc:
+        return f"{C.reply_name(code)} (could not decode: {exc}) {data.hex(' ').upper()}"
+    body = data.hex(" ").upper()
+    return f"{C.reply_name(code)} {body}".strip()

@@ -37,8 +37,8 @@ jobs:
         run: python -m pytest -v
       - name: Build executables
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name OSDPReaderProgrammer --paths src launch_gui.py
-          pyinstaller --noconfirm --clean --onefile --console --name readerprog --paths src launch_cli.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name OSDPReaderProgrammer --paths src --collect-data netaddr launch_gui.py
+          pyinstaller --noconfirm --clean --onefile --console --name readerprog --paths src --collect-data netaddr launch_cli.py
       - name: Smoke test the built command-line exe
         run: |
           dist\readerprog.exe ports

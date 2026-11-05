@@ -16,6 +16,9 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import APP_NAME, __version__
 from . import programmer as P
+from .commands import STANDARD_GROUP, MFG_GROUP, VENDOR_NOTES, VENDORS, CommandDef, CommandLibrary, \
+    STANDARD_COMMANDS, UserCommand
+from .osdp.decode import decode_pdid, describe_reply
 from .osdp import constants as C
 from .osdp.cp import SCAN_BAUD_ORDER, Bus, OsdpError, Reader, scan
 from .osdp.secure import SecureChannelError, parse_key
@@ -214,7 +217,7 @@ class App:
         self._build_secure_tab()
         self._build_test_tab()
         self._build_info_tab()
-        self._build_advanced_tab()
+        self._build_commands_tab()
         self._build_log_tab()
         self._build_help_tab()
 
@@ -357,24 +360,78 @@ class App:
         self.tabs.add(tab, text="Reader info")
         self.info_text = self._text(tab)
 
-    def _build_advanced_tab(self) -> None:
+    def _build_commands_tab(self) -> None:
         tab = ttk.Frame(self.tabs, padding=10)
-        self.tabs.add(tab, text="Advanced")
-        ttk.Label(tab, wraplength=960, justify="left", text=(
-            "Send any OSDP command to the reader. Use this only with guidance from the reader manufacturer "
-            "(for example an osdp_MFG 0x80 command whose payload starts with the 3-byte vendor code).")).pack(fill="x")
-        row = ttk.Frame(tab)
-        row.pack(fill="x", pady=8)
-        ttk.Label(row, text="Command code (hex):").pack(side="left")
+        self.tabs.add(tab, text="Commands")
+        self.library = self._load_library()
+        ttk.Label(tab, wraplength=980, justify="left", text=(
+            "Standard OSDP commands with simple forms, plus your own saved commands, for example "
+            "manufacturer commands from HID, Veridt or IDFactors support. Anything that can change the "
+            "reader's configuration asks before it is sent.")).pack(fill="x")
+
+        panes = ttk.Panedwindow(tab, orient="horizontal")
+        panes.pack(fill="both", expand=True, pady=(6, 0))
+        left = ttk.Frame(panes)
+        panes.add(left, weight=1)
+        tree_frame = ttk.Frame(left)
+        tree_frame.pack(fill="both", expand=True)
+        self.cmd_tree = ttk.Treeview(tree_frame, show="tree", selectmode="browse", height=14)
+        self.cmd_tree.column("#0", width=290, minwidth=200, stretch=True)
+        tree_scroll = ttk.Scrollbar(tree_frame, command=self.cmd_tree.yview)
+        self.cmd_tree.configure(yscrollcommand=tree_scroll.set)
+        tree_scroll.pack(side="right", fill="y")  # packed first so it is never squeezed out
+        self.cmd_tree.pack(side="left", fill="both", expand=True)
+        self.cmd_tree.bind("<<TreeviewSelect>>", lambda e: self.on_command_selected())
+        btns = ttk.Frame(left)
+        btns.pack(fill="x", pady=(4, 0))
+        for i, (text, fn) in enumerate((("New...", self.new_user_command), ("Edit...", self.edit_user_command),
+                                        ("Delete", self.delete_user_command), ("Import...", self.import_library),
+                                        ("Export...", self.export_library))):
+            ttk.Button(btns, text=text, command=fn).grid(row=i // 3, column=i % 3, sticky="we", padx=1, pady=1)
+        for col in range(3):
+            btns.columnconfigure(col, weight=1)
+
+        right = ttk.Frame(panes, padding=(10, 0, 0, 0))
+        panes.add(right, weight=3)
+        self.cmd_title = ttk.Label(right, text="Pick a command on the left", font=("Segoe UI", 11, "bold"))
+        self.cmd_title.pack(anchor="w")
+        self.cmd_desc = ttk.Label(right, text="", wraplength=640, justify="left")
+        self.cmd_desc.pack(anchor="w", pady=(2, 0))
+        self.cmd_source = ttk.Label(right, text="", foreground="#555")
+        self.cmd_source.pack(anchor="w")
+        self.cmd_params = ttk.Frame(right)
+        self.cmd_params.pack(fill="x", pady=6)
+        self.cmd_preview = ttk.Label(right, text="", font=MONO, foreground="#1f4e9a", wraplength=640,
+                                     justify="left")
+        self.cmd_preview.pack(anchor="w")
+        row = ttk.Frame(right)
+        row.pack(fill="x", pady=6)
+        self.cmd_secure_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text="Send over secure channel (key from the Secure channel tab)",
+                        variable=self.cmd_secure_var).pack(side="left")
+        ttk.Button(row, text="Send", command=self.send_selected_command,
+                   style="Accent.TButton").pack(side="right")
+
+        raw = ttk.LabelFrame(right, text="Raw command (any command code + hex data)", padding=6)
+        raw.pack(fill="x")
+        ttk.Label(raw, text="Code:").pack(side="left")
         self.raw_code_var = tk.StringVar(value="61")
-        ttk.Entry(row, textvariable=self.raw_code_var, width=6, font=MONO).pack(side="left", padx=4)
-        ttk.Label(row, text="Data (hex):").pack(side="left")
+        ttk.Entry(raw, textvariable=self.raw_code_var, width=5, font=MONO).pack(side="left", padx=4)
+        ttk.Label(raw, text="Data:").pack(side="left")
         self.raw_data_var = tk.StringVar(value="00")
-        ttk.Entry(row, textvariable=self.raw_data_var, width=60, font=MONO).pack(side="left", padx=4)
         self.raw_secure_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row, text="secure channel", variable=self.raw_secure_var).pack(side="left")
-        ttk.Button(row, text="Send", command=self.send_raw).pack(side="left", padx=4)
-        self.raw_text = self._text(tab)
+        ttk.Button(raw, text="Send", command=self.send_raw).pack(side="right", padx=(4, 0))
+        ttk.Checkbutton(raw, text="secure", variable=self.raw_secure_var).pack(side="right")
+        ttk.Entry(raw, textvariable=self.raw_data_var, width=20, font=MONO).pack(side="left", padx=4,
+                                                                                 fill="x", expand=True)
+
+        self.cmd_text = self._text(right, height=8, pady=(6, 0))
+        self.raw_text = self.cmd_text
+        self.param_vars: dict[str, tk.StringVar] = {}
+        self.selected_command: Optional[CommandDef] = None
+        self.selected_user: Optional[UserCommand] = None
+        self._tree_items: dict[str, tuple] = {}
+        self.refresh_command_tree()
 
     def _build_log_tab(self) -> None:
         tab = ttk.Frame(self.tabs, padding=10)
@@ -772,19 +829,244 @@ class App:
 
     def send_raw(self) -> None:
         def go():
-            code = int(self.raw_code_var.get(), 16)
+            code = int(self.raw_code_var.get().strip().replace("0x", ""), 16)
             data = bytes.fromhex(self.raw_data_var.get().replace(" ", ""))
+            if not 0 <= code <= 0xFF:
+                raise ValueError("Command code must be one byte (00-FF)")
 
             def action(r: Reader):
                 return r.command(code, data, raise_nak=False)
 
             def done(reply):
                 self.put(self.raw_text, f"> {C.command_name(code)} {data.hex(' ').upper()}")
-                self.put(self.raw_text, f"< {reply.name} {reply.data.hex(' ').upper()}",
+                self.put(self.raw_text, f"< {reply.name}: {describe_reply(reply.code, reply.data)}",
                          "err" if reply.code == C.REPLY_NAK else "ok")
 
             self._with_reader("Sending command", action, done, secure=self.raw_secure_var.get())
         self._guard(go)
+
+    # ------------------------------------------------------------------
+    # command library
+    # ------------------------------------------------------------------
+    def _load_library(self) -> CommandLibrary:
+        path = CommandLibrary.default_path()
+        try:
+            return CommandLibrary.load(path)
+        except Exception as exc:  # unreadable file: keep a copy, start empty
+            backup = path.with_name(time.strftime("command_library.broken-%Y%m%d-%H%M%S.json"))
+            try:
+                path.replace(backup)
+                note = f" The old file was kept as {backup.name}."
+            except OSError:
+                note = ""
+            msg = f"Could not read the command library ({exc}).{note}"
+            self.post(lambda: self.append_log("error", msg))  # Log tab is built after this one
+            return CommandLibrary(path)
+
+    def refresh_command_tree(self, select_key: Optional[str] = None) -> None:
+        tree = self.cmd_tree
+        tree.delete(*tree.get_children())
+        self._tree_items.clear()
+        target = None
+
+        def add(parent, text, kind, obj=None, iid=None):
+            item = tree.insert(parent, "end", iid=iid, text=text, open=True)
+            self._tree_items[item] = (kind, obj)
+            return item
+
+        groups = {STANDARD_GROUP: add("", STANDARD_GROUP, "group", STANDARD_GROUP),
+                  MFG_GROUP: add("", MFG_GROUP, "group", MFG_GROUP)}
+        for d in STANDARD_COMMANDS:
+            item = add(groups[d.group], d.name, "command", (d, None))
+            if select_key == d.key:
+                target = item
+        for vendor in VENDORS:
+            node = add("", vendor if vendor != "Other" else "Other brands", "vendor", vendor)
+            mine = [c for c in self.library.commands if c.vendor == vendor]
+            if not mine:
+                add(node, "(no commands yet - select for notes)", "vendor", vendor)
+            for uc in mine:
+                try:
+                    d = uc.to_def()
+                except ValueError:
+                    continue
+                item = add(node, uc.name, "command", (d, uc))
+                if select_key == d.key:
+                    target = item
+        if target:
+            tree.selection_set(target)
+            tree.see(target)
+
+    def on_command_selected(self) -> None:
+        sel = self.cmd_tree.selection()
+        if not sel:
+            return
+        kind, obj = self._tree_items.get(sel[0], ("group", None))
+        for child in self.cmd_params.winfo_children():
+            child.destroy()
+        self.param_vars = {}
+        self.selected_command = None
+        self.selected_user = None
+        if kind != "command":
+            title = obj if isinstance(obj, str) else ""
+            self.cmd_title.configure(text=title)
+            self.cmd_desc.configure(text=VENDOR_NOTES.get(title, "Pick a command."))
+            self.cmd_source.configure(text="")
+            self.cmd_preview.configure(text="")
+            return
+        cmd, user = obj
+        self.selected_command, self.selected_user = cmd, user
+        self.cmd_title.configure(text=cmd.name)
+        desc = cmd.description
+        if cmd.changes_settings:
+            desc += "\n\nCan change the reader's configuration - you will be asked to confirm."
+        self.cmd_desc.configure(text=desc)
+        self.cmd_source.configure(text=f"Source: {cmd.source}" + ("   (secure channel)" if cmd.secure else ""))
+        for row, prm in enumerate(cmd.params):
+            ttk.Label(self.cmd_params, text=prm.label + ":").grid(row=row, column=0, sticky="w", pady=1)
+            default = prm.default_display()
+            if cmd.key == "mfg" and prm.key == "vendor" and self.last_device is not None:
+                default = self.last_device.vendor_hex.replace("-", " ")
+            var = tk.StringVar(value=default)
+            if prm.kind == "choice":
+                widget = ttk.Combobox(self.cmd_params, textvariable=var, values=list(prm.choices or {}),
+                                      state="readonly", width=34)
+            elif prm.kind == "int":
+                widget = ttk.Spinbox(self.cmd_params, from_=prm.minimum, to=prm.maximum, textvariable=var, width=10)
+            else:
+                widget = ttk.Entry(self.cmd_params, textvariable=var, width=34,
+                                   font=MONO if prm.kind == "hex" else None)
+            widget.grid(row=row, column=1, sticky="w", padx=6, pady=1)
+            if prm.help:
+                ttk.Label(self.cmd_params, text=prm.help, foreground="#555").grid(row=row, column=2, sticky="w")
+            var.trace_add("write", lambda *a: self.update_command_preview())
+            self.param_vars[prm.key] = var
+        self.update_command_preview()
+
+    def _command_values(self) -> dict:
+        return {k: v.get() for k, v in self.param_vars.items()}
+
+    def update_command_preview(self) -> None:
+        cmd = self.selected_command
+        if cmd is None:
+            self.cmd_preview.configure(text="")
+            return
+        try:
+            self.cmd_preview.configure(text="Sends: " + cmd.preview(self._command_values()), foreground="#1f4e9a")
+        except ValueError as exc:
+            self.cmd_preview.configure(text=f"Fix this first: {exc}", foreground="#b00020")
+
+    def send_selected_command(self) -> None:
+        cmd = self.selected_command
+        if cmd is None:
+            messagebox.showinfo(APP_NAME, "Pick a command on the left first.")
+            return
+
+        def go():
+            data = cmd.payload(self._command_values())
+            if cmd.changes_settings and not messagebox.askokcancel(
+                    APP_NAME, f"'{cmd.name}' can change the reader's configuration.\n\n"
+                              f"Send {C.command_name(cmd.code)} with data:\n"
+                              f"{data.hex(' ').upper() or '(none)'}\n\nContinue?"):
+                return
+            secure = self.cmd_secure_var.get() or cmd.secure
+
+            def done(reply):
+                self.put(self.cmd_text, f"> {cmd.name}: {C.command_name(cmd.code)} {data.hex(' ').upper()}")
+                self.put(self.cmd_text, f"< {reply.name}: {describe_reply(reply.code, reply.data)}",
+                         "err" if reply.code == C.REPLY_NAK else "ok")
+                if reply.code == C.REPLY_PDID:
+                    try:
+                        self.last_device = decode_pdid(reply.data)
+                    except Exception:
+                        pass
+
+            self._with_reader(f"Sending {cmd.name}", lambda r: r.command(cmd.code, data, raise_nak=False),
+                              done, secure=secure)
+        self._guard(go)
+
+    def _ask_user_command(self, existing: Optional[UserCommand], vendor: str = "Other") -> Optional[UserCommand]:
+        vendor_code = self.last_device.vendor_hex.replace("-", " ") if self.last_device else "00 11 12"
+        dialog = UserCommandDialog(self.root, existing, vendor=vendor, vendor_code=vendor_code)
+        self.root.wait_window(dialog)
+        return dialog.result
+
+    def _save_library(self) -> bool:
+        try:
+            path = self.library.save()
+            self.append_log("info", f"Command library saved to {path}")
+            return True
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Could not save the command library:\n{exc}")
+            return False
+
+    def _selected_vendor(self) -> str:
+        sel = self.cmd_tree.selection()
+        if sel:
+            kind, obj = self._tree_items.get(sel[0], ("", None))
+            if kind == "vendor" and obj in VENDORS:
+                return obj
+            if kind == "command" and obj[1] is not None:
+                return obj[1].vendor
+        return "Other"
+
+    def new_user_command(self) -> None:
+        cmd = self._ask_user_command(None, self._selected_vendor())
+        if cmd is None:
+            return
+        self.library.upsert(cmd)
+        if self._save_library():
+            self.refresh_command_tree(select_key=cmd.to_def().key)
+
+    def edit_user_command(self) -> None:
+        if self.selected_user is None:
+            messagebox.showinfo(APP_NAME, "Select one of your own commands to edit. Built-in commands can't be "
+                                          "edited, but their settings can be changed before sending.")
+            return
+        original = self.selected_user
+        cmd = self._ask_user_command(original, original.vendor)
+        if cmd is None:
+            return
+        self.library.upsert(cmd, replacing=original)
+        if self._save_library():
+            self.refresh_command_tree(select_key=cmd.to_def().key)
+
+    def delete_user_command(self) -> None:
+        if self.selected_user is None:
+            messagebox.showinfo(APP_NAME, "Select one of your own commands to delete.")
+            return
+        if not messagebox.askyesno(APP_NAME, f"Delete '{self.selected_user.name}' from your command library?"):
+            return
+        self.library.remove(self.selected_user)
+        if self._save_library():
+            self.refresh_command_tree()
+            self.cmd_title.configure(text="Pick a command on the left")
+            self.cmd_desc.configure(text="")
+
+    def import_library(self) -> None:
+        path = filedialog.askopenfilename(filetypes=[("Command library", "*.json"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            count = self.library.import_file(Path(path))
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror(APP_NAME, f"Could not import {path}:\n{exc}")
+            return
+        if self._save_library():
+            self.refresh_command_tree()
+            self.status_var.set(f"Imported {count} command(s)")
+
+    def export_library(self) -> None:
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("Command library", "*.json")],
+                                            initialfile="command_library.json")
+        if not path:
+            return
+        try:
+            self.library.export(Path(path))
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Could not export:\n{exc}")
+            return
+        self.status_var.set(f"Exported {len(self.library.commands)} command(s) to {path}")
 
     def save_log(self) -> None:
         path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")],
@@ -815,6 +1097,69 @@ class App:
         self.root.destroy()
 
 
+class UserCommandDialog(tk.Toplevel):
+    """Add or edit one user command."""
+
+    def __init__(self, parent, existing: Optional[UserCommand] = None, *, vendor: str = "Other",
+                 vendor_code: str = "00 11 12", modal: bool = True):
+        super().__init__(parent)
+        self.title("Edit command" if existing else "New command")
+        self.result: Optional[UserCommand] = None
+        self.resizable(False, False)
+        src = existing or UserCommand(name="", vendor=vendor, code="80", data=vendor_code + " ")
+        self.name_var = tk.StringVar(value=src.name)
+        self.vendor_var = tk.StringVar(value=src.vendor)
+        self.code_var = tk.StringVar(value=src.code)
+        self.data_var = tk.StringVar(value=src.data)
+        self.secure_var = tk.BooleanVar(value=src.secure)
+        self.changes_var = tk.BooleanVar(value=src.changes_settings)
+        self.source_var = tk.StringVar(value=src.source)
+
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        rows = [("Name:", ttk.Entry(frm, textvariable=self.name_var, width=50)),
+                ("Brand:", ttk.Combobox(frm, textvariable=self.vendor_var, values=VENDORS, state="readonly",
+                                        width=20)),
+                ("Command code (hex):", ttk.Entry(frm, textvariable=self.code_var, width=6, font=MONO)),
+                ("Data (hex):", ttk.Entry(frm, textvariable=self.data_var, width=50, font=MONO)),
+                ("Where it came from:", ttk.Entry(frm, textvariable=self.source_var, width=50))]
+        for i, (label, widget) in enumerate(rows):
+            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", pady=2)
+            widget.grid(row=i, column=1, sticky="w", padx=6, pady=2)
+        ttk.Label(frm, wraplength=460, justify="left", foreground="#555", text=(
+            "For a manufacturer command use code 80 (osdp_MFG). The data starts with the reader's 3-byte "
+            f"vendor code ({vendor_code} for the last reader you read), followed by the payload the "
+            "manufacturer gave you.")).grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(4, 2))
+        ttk.Label(frm, text="Notes:").grid(row=len(rows) + 1, column=0, sticky="nw", pady=2)
+        self.notes = tk.Text(frm, width=50, height=4, wrap="word")
+        self.notes.insert("1.0", src.notes)
+        self.notes.grid(row=len(rows) + 1, column=1, sticky="w", padx=6, pady=2)
+        ttk.Checkbutton(frm, text="Needs a secure channel", variable=self.secure_var).grid(
+            row=len(rows) + 2, column=1, sticky="w")
+        ttk.Checkbutton(frm, text="Changes reader settings (ask before sending)", variable=self.changes_var).grid(
+            row=len(rows) + 3, column=1, sticky="w")
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(rows) + 4, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(btns, text="Save", command=self.save).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=6)
+        if modal:
+            self.transient(parent)
+            self.grab_set()
+
+    def save(self) -> None:
+        cmd = UserCommand(name=self.name_var.get().strip(), vendor=self.vendor_var.get(),
+                          code=self.code_var.get().strip(), data=self.data_var.get().strip(),
+                          secure=self.secure_var.get(), changes_settings=self.changes_var.get(),
+                          notes=self.notes.get("1.0", "end").strip(), source=self.source_var.get().strip())
+        try:
+            cmd.validate()
+        except ValueError as exc:
+            messagebox.showerror(APP_NAME, str(exc), parent=self)
+            return
+        self.result = cmd
+        self.destroy()
+
+
 HELP_TEXT = """Quick start
 -----------
 1. Wire the reader to the USB-RS485 adapter: reader RS-485 + (A) to adapter A/D+, RS-485 - (B) to
@@ -828,6 +1173,9 @@ HELP_TEXT = """Quick start
 5. Copy the 'Enter these settings in OnGuard' panel into the reader's properties in OnGuard.
 6. Optional: '3. Test' checks the LED, buzzer and card reads (shows card bit length for the
    OnGuard card format).
+
+Commands tab: send any standard OSDP command with a simple form, build manufacturer (osdp_MFG)
+commands, and keep your own library of vendor commands (Import/Export to share it with your team).
 
 Every programming action is appended to programming_log.csv in Documents\\OSDP Reader Programmer.
 

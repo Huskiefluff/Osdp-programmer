@@ -17,6 +17,8 @@ What it does:
 | Test before you mount it | LED colors, buzzer, live card reads with bit length and decoded fields (26-bit, 37-bit, 75-bit PIV, 200-bit FASC-N) |
 | Tell you what to enter in OnGuard | Generates an OnGuard settings checklist you can copy |
 | Keep records | Appends every action to `Documents\OSDP Reader Programmer\programming_log.csv` |
+| Send any OSDP command | **Commands** tab: standard OSDP commands with simple forms, a manufacturer (`osdp_MFG`) command builder, and your own command library for HID, Veridt, IDFactors and other brands |
+| Identify the brand | Shows who owns the reader's vendor code, using the official IEEE registry |
 | Try it without hardware | A **DEMO** port simulates a Veridt-style reader |
 
 It has a GUI (`OSDPReaderProgrammer.exe`) and a command-line version (`readerprog.exe`) for scripting.
@@ -129,8 +131,8 @@ These are the reasons the *Verify after power cycle* step exists:
 ### What this program doesn't do
 
 * **Veridt-proprietary settings**, such as Wiegand output format, authentication modes or other
-  MultiMode SDK features, aren't publicly documented, so they aren't implemented. The *Advanced* tab
-  can send any raw OSDP command (including `osdp_MFG`) if Veridt support gives you one.
+  MultiMode SDK features, aren't publicly documented, so they aren't built in. If Veridt support gives
+  you the OSDP form of a setting, save it in the **Commands** tab (see section 7).
 * Firmware updates and Veridt configuration cards.
 * Recovering a reader whose custom secure channel key is unknown.
 
@@ -147,7 +149,32 @@ These are the reasons the *Verify after power cycle* step exists:
 
 The **Log** tab shows every packet sent and received (hex) and can be saved for support.
 
-## 7. Command line
+## 7. Commands tab: standard and vendor commands
+
+The **Commands** tab lists every command the program can send:
+
+* **Standard OSDP**: identity, capabilities, status, LED, buzzer, outputs, text display and more.
+  Each one has a small form, shows the exact bytes it will send, and decodes the reply.
+* **Manufacturer specific (`osdp_MFG`)**: the reader's 3-byte vendor code (filled in from the last
+  reader you read) followed by a payload the manufacturer gives you.
+* **HID / Veridt / IDFactors / Other brands**: your own saved commands. Use **New...** to add one,
+  and record where it came from (for example a support ticket). **Export...** and **Import...** share
+  the library (`command_library.json` in `Documents\OSDP Reader Programmer`) with your team.
+
+Anything that can change the reader's configuration asks for confirmation before it's sent.
+
+**Why there are no built-in HID, Veridt or IDFactors commands:** none of them publish their OSDP
+configuration commands. HID's are only for HID partners, and Veridt's command cards (for example
+`XOPTIONS A2004002` or `X2OPTIONS 83`) are read from the card by the reader, not sent over OSDP.
+Sending guessed bytes could misconfigure a reader. Ask the manufacturer's support for the `osdp_MFG`
+form of the setting you need, then save it here.
+
+**Vendor codes:** every OSDP reader reports a 3-byte vendor code (an IEEE OUI). *Read info* shows who
+the IEEE registry says owns it. Examples: HID = `00-06-8E`. The Veridt Stealth readers tested with this
+program report `00-11-12`, registered to *Honeywell CMSS*. Veridt and IDFactors have no code of their
+own in the registry. Look any code up with `readerprog vendor 00-11-12`.
+
+## 8. Command line
 
 `readerprog.exe` (or `python -m readerprog <command>` from source) does the same jobs without the GUI.
 Add `--simulate` to any command to use the simulated reader, or `-v` to print the packet trace.
@@ -163,12 +190,17 @@ readerprog set-key --port COM3 --addr 0 --new-key random
 readerprog led green --port COM3 --addr 0
 readerprog beep    --port COM3 --addr 0
 readerprog watch   --port COM3 --addr 0                  print card reads (Ctrl+C to stop)
+readerprog commands                                      list built-in and saved commands
+readerprog run Buzzer --set count=3 --port COM3 --addr 0  send a command from the library
+readerprog run mfg --set vendor=001112 --set payload=0102 --yes --port COM3 --addr 0
+readerprog vendor 00-11-12                               who owns an OSDP vendor code
 readerprog send 0x61 --data 00 --port COM3 --addr 0      raw command (advanced)
 ```
 
-Add `--key <32 hex digits>` (or `--key default`) to run a command over secure channel.
+Add `--key <32 hex digits>` (or `--key default`) to run a command over secure channel. Commands
+that change reader settings need `--yes`.
 
-## 8. Development
+## 9. Development
 
 ```
 python -m pip install -r requirements-dev.txt
@@ -179,6 +211,9 @@ python -m pytest
 * `src/readerprog/osdp/` is a small OSDP control-panel stack: packet framing, CRC-16, secure
   channel (AES-128 session keys, cryptograms, MAC chaining, data encryption), reply decoding and
   discovery.
+* `src/readerprog/commands.py` is the command library (standard OSDP commands and the user library).
+* `src/readerprog/osdp/vendors.py` identifies vendor codes; it uses the IEEE registry bundled with
+  `netaddr`, with a small built-in table as a fallback.
 * `src/readerprog/sim.py` is the simulated Veridt-style reader used for demo mode and tests.
 * `tests/test_libosdp_interop.py` runs this code against [libosdp](https://github.com/goToMain/libosdp),
   an independent OSDP implementation. It covers plain commands, secure channel with the default and custom keys,

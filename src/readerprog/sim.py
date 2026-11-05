@@ -65,6 +65,10 @@ class SimulatedReader:
         self.serial_number = serial_number
         self.tamper = False
         self.last_led: Optional[bytes] = None
+        self.last_text = ""
+        self.inputs = [0, 0]
+        self.outputs = [0]
+        self.mfg_received: list[bytes] = []
         self.beeps = 0
         self.powered = True
         self._session: Optional[SecureSession] = None
@@ -173,7 +177,7 @@ class SimulatedReader:
             body = (SIM_VENDOR + bytes([1, 1]) + self.serial_number.to_bytes(4, "little") + bytes([2, 3, 0]))
             return self._reply(pkt, C.REPLY_PDID, body)
         if code == C.CMD_CAP:
-            caps = [(3, 1, 0), (4, 4, 1), (5, 1, 1), (8, 1, 0), (9, 1, 1), (10, 0x00, 0x04),
+            caps = [(1, 1, 2), (2, 1, 1), (3, 1, 0), (4, 4, 1), (5, 1, 1), (8, 1, 0), (9, 1, 1), (10, 0x00, 0x04),
                     (11, 0x00, 0x04), (13, 0, 1), (16, 2, 0)]
             return self._reply(pkt, C.REPLY_PDCAP, b"".join(bytes(c) for c in caps))
         if code == C.CMD_LSTAT:
@@ -212,6 +216,36 @@ class SimulatedReader:
                 return self._nak(pkt, 0x02)
             self.scbk = bytes(data[2:18])
             return self._reply(pkt, C.REPLY_ACK)
+        if code == C.CMD_ISTAT:
+            return self._reply(pkt, C.REPLY_ISTATR, bytes(self.inputs))
+        if code == C.CMD_OSTAT:
+            return self._reply(pkt, C.REPLY_OSTATR, bytes(self.outputs))
+        if code == C.CMD_OUT:
+            if len(data) < 4 or len(data) % 4:
+                return self._nak(pkt, 0x02)
+            for i in range(0, len(data), 4):
+                num, action = data[i], data[i + 1]
+                if num >= len(self.outputs):
+                    return self._nak(pkt, 0x09)
+                if action in (2, 4, 5):
+                    self.outputs[num] = 1
+                elif action in (1, 3, 6):
+                    self.outputs[num] = 0
+            return self._reply(pkt, C.REPLY_ACK)
+        if code == C.CMD_TEXT:
+            if len(data) < 6:
+                return self._nak(pkt, 0x02)
+            self.last_text = bytes(data[6:6 + data[5]]).decode("ascii", "replace")
+            return self._reply(pkt, C.REPLY_ACK)
+        if code in (C.CMD_ACURXSIZE, C.CMD_KEEPACTIVE, C.CMD_ABORT):
+            return self._reply(pkt, C.REPLY_ACK)
+        if code == C.CMD_MFG:
+            # The simulator only understands its own (fake) vendor code and simply
+            # echoes the payload back, like a manufacturer "ping".
+            if len(data) >= 3 and bytes(data[:3]) == SIM_VENDOR:
+                self.mfg_received.append(bytes(data[3:]))
+                return self._reply(pkt, C.REPLY_MFGREP, SIM_VENDOR + bytes(data[3:]))
+            return self._nak(pkt, 0x03)
         return self._nak(pkt, 0x03)
 
     def _handle_chlng(self, pkt: Packet) -> bytes:

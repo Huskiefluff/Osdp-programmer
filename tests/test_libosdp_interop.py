@@ -74,7 +74,8 @@ def libosdp_pd():
     caps = osdp.PDCapabilities([
         (osdp.Capability.LEDControl, 1, 1), (osdp.Capability.AudibleControl, 1, 1),
         (osdp.Capability.CommunicationSecurity, 1, 1), (osdp.Capability.CheckCharacter, 1, 0),
-        (osdp.Capability.Readers, 0, 1)])
+        (osdp.Capability.Readers, 0, 1), (osdp.Capability.OutputControl, 1, 1),
+        (osdp.Capability.TextOutput, 1, 1)])
     pd = osdp.PeripheralDevice(info, caps, log_level=osdp.LogLevel.Error)
     pd.start()
     try:
@@ -162,3 +163,25 @@ def test_simulator_against_libosdp_cp():
         assert event["length"] == 26
     finally:
         cp.teardown()
+
+
+def test_output_text_and_mfg_reach_libosdp(libosdp_pd):
+    from readerprog import commands as K
+
+    pd, bus = libosdp_pd
+    r = Reader(bus, 5, timeout=0.5)
+    r.poll()
+    out = K.find_definition("Output control")
+    r.command(out.code, out.payload({**out.defaults(), "output": "0", "timer": "25"}))
+    cmd = pd.get_command(timeout=2)
+    assert cmd["command"] == osdp.Command.Output and cmd["control_code"] == 2 and cmd["timer_count"] == 25
+    text = K.find_definition("text")
+    r.command(text.code, text.payload({**text.defaults(), "text": "LOBBY", "row": "2", "col": "3"}))
+    cmd = pd.get_command(timeout=2)
+    assert cmd["command"] == osdp.Command.Text and cmd["data"] == "LOBBY"
+    assert (cmd["offset_row"], cmd["offset_col"]) == (2, 3)
+    mfg = K.find_definition("mfg")
+    r.command(mfg.code, mfg.payload({"vendor": "00 11 12", "payload": "01 02"}))
+    cmd = pd.get_command(timeout=2)
+    assert cmd["command"] == osdp.Command.Manufacturer and cmd["data"] == b"\x01\x02"
+    assert cmd["vendor_code"].to_bytes(3, "little") == bytes([0x00, 0x11, 0x12])
