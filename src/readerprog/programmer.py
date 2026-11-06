@@ -28,7 +28,13 @@ VERIDT_NOTES = [
     "Older (pre-2022) Veridt OSDP readers could stay offline after a power loss when the panel "
     "auto-detected the baud rate. LenelS2's fix is a fixed address (0) at 9600 baud on the reader, "
     "with the same baud rate set explicitly in OnGuard (OnGuard 8.1 does not auto-negotiate it).",
-    "The tamper wire is not used in OSDP mode; leave it disconnected.",
+    "Tamper: never wire the orange tamper lead to the panel. For OSDP, Veridt TN 123 says to jumper orange (tamper, pin 9) to gray (Input 1, pin 8) at the reader so tamper is reported over OSDP; otherwise the reader can report TAMPER all the time.",
+    "Cable (Veridt TN 123): shield to earth at the panel end only, RS-485 terminated only at the reader, "
+    "and a ground reference wire between panel and reader. At 300 mA the maximum power run is about "
+    "113 ft on 22 AWG and 289 ft on 18 AWG.",
+    "With Lenel embedded authentication (LNL-4420), Veridt TN 126 says a valid card can take up to about "
+    "4 s to verify (2 beeps, 5 green flashes); an invalid card is denied almost instantly (3 beeps, solid "
+    "red for 5 s).",
     "Power the reader from a 12 VDC (+/- 1 V) supply that can deliver at least 300 mA. "
     "The USB adapter does not power the reader.",
 ]
@@ -295,7 +301,8 @@ def onguard_checklist(address: int, baud: int, *, device_id: Optional[D.DeviceId
     lines += [
         "",
         "Wiring at the panel: RS-485 + (A) and RS-485 - (B), plus 12 VDC and ground.",
-        "Leave the tamper wire disconnected in OSDP mode.",
+        "Tamper: jumper orange (tamper) to gray (Input 1) at the reader; never wire it to the panel.",
+        "Shield: earth at the panel end only. Termination: at the reader only (Veridt TN 123).",
     ]
     return "\n".join(lines)
 

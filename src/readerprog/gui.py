@@ -19,6 +19,7 @@ from . import programmer as P
 from .commands import STANDARD_GROUP, MFG_GROUP, VENDOR_NOTES, VENDORS, CommandDef, CommandLibrary, \
     STANDARD_COMMANDS, UserCommand
 from .osdp.decode import decode_pdid, describe_reply
+from .osdp.probe import probe_commands, report as probe_report
 from .osdp import constants as C
 from .osdp.cp import SCAN_BAUD_ORDER, Bus, OsdpError, Reader, scan
 from .osdp.secure import SecureChannelError, parse_key
@@ -364,10 +365,14 @@ class App:
         tab = ttk.Frame(self.tabs, padding=10)
         self.tabs.add(tab, text="Commands")
         self.library = self._load_library()
-        ttk.Label(tab, wraplength=980, justify="left", text=(
+        intro = ttk.Frame(tab)
+        intro.pack(fill="x")
+        ttk.Button(intro, text="Check supported commands", command=self.check_supported_commands).pack(
+            side="right", padx=(8, 0))
+        ttk.Label(intro, wraplength=760, justify="left", text=(
             "Standard OSDP commands with simple forms, plus your own saved commands, for example "
             "manufacturer commands from HID, Veridt or IDFactors support. Anything that can change the "
-            "reader's configuration asks before it is sent.")).pack(fill="x")
+            "reader's configuration asks before it is sent.")).pack(side="left", fill="x", expand=True)
 
         panes = ttk.Panedwindow(tab, orient="horizontal")
         panes.pack(fill="both", expand=True, pady=(6, 0))
@@ -985,6 +990,40 @@ class App:
                               done, secure=secure)
         self._guard(go)
 
+    def check_supported_commands(self) -> None:
+        def go():
+            port, addr, baud = self._port(), self._addr(), self._baud()
+
+            def job(s: Session):
+                reader = Reader(s.open(port, baud), addr)
+                dev = None
+                try:
+                    dev = reader.identify()
+                except OsdpError:
+                    pass
+                results = probe_commands(
+                    reader, progress=lambda t, f: self.post(lambda: self.status_var.set(t + "...")),
+                    cancelled=self.worker.cancel.is_set)
+                return dev, results
+
+            def done(out):
+                dev, results = out
+                header = f"Command support for the reader at address {addr} @ {baud} baud"
+                if dev is not None:
+                    self.last_device = dev
+                    header += (f"\nSerial {dev.serial_number}, firmware {dev.firmware}, "
+                               f"vendor code {dev.vendor_hex} ({dev.vendor_name})")
+                self.put(self.cmd_text, probe_report(results, header + "\n"), clear=True)
+                self.status_var.set("Command check complete")
+
+            self._guard_monitor_off()
+            self.run("Checking supported commands", job, done)
+        self._guard(go)
+
+    def _guard_monitor_off(self) -> None:
+        if self.worker.monitor_enabled.is_set():
+            self.toggle_monitor()
+
     def _ask_user_command(self, existing: Optional[UserCommand], vendor: str = "Other") -> Optional[UserCommand]:
         vendor_code = self.last_device.vendor_hex.replace("-", " ") if self.last_device else "00 11 12"
         dialog = UserCommandDialog(self.root, existing, vendor=vendor, vendor_code=vendor_code)
@@ -1164,7 +1203,8 @@ HELP_TEXT = """Quick start
 -----------
 1. Wire the reader to the USB-RS485 adapter: reader RS-485 + (A) to adapter A/D+, RS-485 - (B) to
    adapter B/D-, and connect grounds. Power the reader from a separate 12 VDC supply (300 mA+).
-   Leave the tamper wire disconnected. Connect ONE reader at a time.
+   Tamper: jumper orange to gray (Input 1) at the reader, never to the panel. Connect ONE reader
+   at a time.
 2. Pick the adapter's COM port above (Device Manager > Ports shows it) and click 'Find reader'.
    The tool tries every baud rate and address and fills in the current settings.
 3. On '1. Program', choose the address and baud rate that you will enter in OnGuard and click
@@ -1176,6 +1216,8 @@ HELP_TEXT = """Quick start
 
 Commands tab: send any standard OSDP command with a simple form, build manufacturer (osdp_MFG)
 commands, and keep your own library of vendor commands (Import/Export to share it with your team).
+'Check supported commands' lists which OSDP commands the connected reader implements - run it on
+two readers to compare them.
 
 Every programming action is appended to programming_log.csv in Documents\\OSDP Reader Programmer.
 

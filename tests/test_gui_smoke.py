@@ -13,8 +13,8 @@ def app(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     try:
         root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no display available")
+    except tk.TclError as exc:
+        pytest.skip(f"no display available ({exc})")
     from readerprog import gui
 
     dialogs = []
@@ -173,3 +173,9 @@ def test_commands_tab(app, tmp_path, monkeypatch):
     dlg.code_var.set("80")
     dlg.save()
     assert dlg.result is not None and dlg.result.vendor == "HID" and dlg.result.data.startswith("00 06 8E")
+
+
+def test_check_supported_commands(app):
+    app.check_supported_commands()
+    assert pump(app, lambda: "Supported: osdp_POLL" in text(app.cmd_text)), (text(app.cmd_text), app.dialogs)
+    assert "osdp_BIOREAD" in text(app.cmd_text) and "Serial 12345678" in text(app.cmd_text)

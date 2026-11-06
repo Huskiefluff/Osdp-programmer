@@ -26,13 +26,19 @@ from .osdp import decode as D
 VENDORS = ("HID", "Veridt", "IDFactors", "Other")
 
 VENDOR_NOTES = {
-    "HID": "HID's OSDP manufacturer commands are only available to HID partners. Add the ones HID "
-           "support gives you here.",
+    "HID": "HID confirms its readers accept HID manufacturer-specific OSDP commands (for example to enter "
+           "install mode or change the OSDP version, sent through Mercury panels) and HID configuration "
+           "cards, but the command format is only given to HID partners. Signo and iCLASS SE readers can "
+           "also be configured with the HID Reader Manager mobile app. Add commands HID support gives you "
+           "here.",
     "Veridt": "Veridt command cards (for example XOPTIONS A2004002 or X2OPTIONS 83) are read by the "
               "reader from the card, not sent over OSDP. Ask Veridt support for the osdp_MFG (0x80) "
               "equivalent and add it here. Veridt Stealth readers report vendor code 00-11-12.",
-    "IDFactors": "IDFactors does not publish OSDP configuration commands. Add the ones their support "
-                 "team gives you here.",
+    "IDFactors": "IDFactors readers are configured with the IDFACTORS ReaderConfig application (ask "
+                 "customerservice@idfactors.com). Its documented command-line entries are 'SM 1F' (switch to "
+                 "1-factor mode) and 'WF xx' (pick a Wiegand format). IDFactors says its readers can also be "
+                 "reconfigured over OSDP, but doesn't publish the OSDP form. A jumper between terminals 1 and 2 "
+                 "also forces 1-factor mode.",
     "Other": "Commands for any other reader brand.",
 }
 

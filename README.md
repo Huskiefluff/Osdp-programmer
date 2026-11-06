@@ -44,23 +44,27 @@ It has a GUI (`OSDPReaderProgrammer.exe`) and a command-line version (`readerpro
 ## 2. Bench wiring
 
 ```
-   Accu-Tech 662314                              Veridt 900W2037 pigtail
-   USB-RS485 adapter                             (confirm colors against the reader's label)
-  ┌──────────────┐                              ┌───────────────────────────┐
-  │ A / D+ / 485+├──────────────────────────────┤ Yellow  RS-485 +  (A)     │
-  │ B / D- / 485-├──────────────────────────────┤ Blue    RS-485 -  (B)     │
-  │ GND          ├──────────────┬───────────────┤ Black   Ground            │
-  └──────┬───────┘              │               │ Red     +12 VDC           │
-         │ USB                  │               │ Orange  Tamper (not used) │
-      Windows PC        12 VDC supply (-) ──────┘└────────────┬──────────────┘
-                        12 VDC supply (+) ────────────────────┘
+   Accu-Tech 662314                    Veridt 900W2037 pigtail
+   USB-RS485 adapter                   (confirm colors against the reader's label)
+  ┌──────────────┐                    ┌──────────────────────────────────────┐
+  │ A / D+ / 485+├────────────────────┤ Yellow  RS-485 +  (A)                │
+  │ B / D- / 485-├────────────────────┤ Blue    RS-485 -  (B)                │
+  │ GND          ├─────────┬──────────┤ Black   Ground                       │
+  └──────┬───────┘         │          │ Red     +12 VDC  ◄── 12 VDC supply + │
+         │ USB             │          │ Orange  Tamper  ─┐ jumper together   │
+     Windows PC            │          │ Gray    Input 1 ─┘ (Veridt TN 123)   │
+                           │          └──────────────────────────────────────┘
+                 12 VDC supply -
 ```
 
 * Power the reader from a **12 VDC (±1 V) supply rated for at least 300 mA**. The USB adapter
   doesn't power the reader. Veridt warns that higher voltage can damage it.
 * Connect **one reader at a time** while programming. Every new Veridt reader ships at the same
   address, so two on the bus will collide.
-* Leave the **tamper wire disconnected**; Veridt says it isn't used in OSDP mode.
+* **Tamper: never wire the orange tamper lead to the panel.** For OSDP, Veridt Tech Note 123 says to
+  jumper orange (tamper, pin 9) to gray (Input 1, pin 8) at the reader, so the reader reports tamper
+  over OSDP. Without it the reader can report *TAMPER* all the time. The older quick-start guide just
+  says the tamper switch isn't required for OSDP.
 * Disconnect the panel from the same wires while programming; two masters on one RS-485 line won't work.
 * Windows normally installs the adapter's driver automatically (FTDI, CP210x, CH340 and Prolific chips
   are all recognized). Find its COM number in **Device Manager → Ports (COM & LPT)**. The program
@@ -124,9 +128,23 @@ These are the reasons the *Verify after power cycle* step exists:
   This program does the same thing over RS-485 and then verifies it.
 * RS-485 colors (Stealth Series Installation Guide, [Tech Note 121][tn121]): yellow = RS-485 + (A),
   blue = RS-485 − (B).
+* **Cabling** ([Tech Note 123][tn123]):
+  * Ground the shield to earth at the **panel end only**.
+  * Terminate RS-485 **at the reader only**.
+  * Run a third wire as a ground reference between panel and reader.
+  * Maximum 12 VDC power run at 300 mA: 113 ft on 22 AWG, 198 ft on 20 AWG, 289 ft on 18 AWG,
+    459 ft on 16 AWG.
+  * Maximum RS-485 run on 24 AWG twisted pair: 4,000 ft at 9600 baud, falling to 1,600 ft at 115200.
+* **What a card read looks like with Lenel embedded authentication on an LNL-4420**
+  ([Tech Note 126][tn126], which covers the 900W2037):
+  * A valid card can take **up to about 4 seconds** to verify, then gives 2 beeps and 5 green flashes.
+  * An invalid card is denied **almost instantly**, with 3 beeps and solid red for 5 seconds.
+  * When you troubleshoot, note whether a failure is instant (a validation decision) or comes after a
+    pause (a timeout).
 
 [tn123]: https://veridt.com/wp-content/uploads/2017/03/Veridt-Tech-Note-123-OSDP-Readers.pdf
 [tn121]: https://veridt.com/wp-content/uploads/2024/12/Veridt-Tech-Note-121-Stealth-Installation-Guide-Rev-9-Dec-2024.pdf
+[tn126]: https://veridt.com/wp-content/uploads/2017/03/Veridt-Tech-Note-126-Lenel-OSDP.pdf
 
 ### What this program doesn't do
 
@@ -163,6 +181,31 @@ The **Commands** tab lists every command the program can send:
 
 Anything that can change the reader's configuration asks for confirmation before it's sent.
 
+### Check supported commands
+
+OSDP has no command that lists a reader's commands. `osdp_CAP` (shown by *Read info*) reports
+capabilities by category only. **Check supported commands** (or `readerprog probe`) tests each standard
+command instead:
+
+* It sends each command once with an **empty payload**, which a reader can't act on.
+* The OSDP spec gives an unimplemented command its own rejection (NAK 03, "unknown command").
+  An implemented command answers normally or with a length error (NAK 02).
+* It never sends COMSET, KEYSET or FILETRANSFER, which could change a reader's address, key or
+  firmware.
+* It checks whether `osdp_MFG` is accepted at all, but never guesses manufacturer sub-commands.
+
+Run it on two readers and compare them, for example old firmware 3.0.36 against new 4.0.136. That
+covers the PIV-related commands (`osdp_XWR` transparent mode, `osdp_PIVDATA`, `osdp_GENAUTH`,
+`osdp_CRAUTH`, `osdp_KEEPACTIVE`). Readers that don't follow the spec closely can give misleading answers.
+
+### What each brand publishes (research, November 2026)
+
+| Brand | How readers are configured | Public OSDP command format? |
+| --- | --- | --- |
+| **Veridt** | Factory configuration, shown by the part-number suffix (for example `-QXYON` for the TI EntryPoint interface), plus Veridt **command cards** such as `XOPTIONS A2004002`. The reader reads the card; nothing is sent over OSDP. | No. The option bits aren't documented publicly. Tech Note 104, despite its title, covers mounting hardware only. |
+| **HID** | HID configuration cards, the HID Reader Manager app (Signo / iCLASS SE), and HID manufacturer-specific OSDP commands. HID's Mercury OSDP FAQ says these can put a reader into install mode or change its OSDP version. | No. Partner-only. |
+| **IDFactors** | The IDFACTORS ReaderConfig application, which has a command line: `SM 1F` switches to 1-factor mode and `WF xx` picks a Wiegand format. A jumper on terminals 1–2 also forces 1-factor mode. The readers can be "reconfigured via OSDP", per IDFactors. | No. Get the ReaderConfig app from customerservice@idfactors.com. |
+
 **Why there are no built-in HID, Veridt or IDFactors commands:** none of them publish their OSDP
 configuration commands. HID's are only for HID partners, and Veridt's command cards (for example
 `XOPTIONS A2004002` or `X2OPTIONS 83`) are read from the card by the reader, not sent over OSDP.
@@ -190,6 +233,7 @@ readerprog set-key --port COM3 --addr 0 --new-key random
 readerprog led green --port COM3 --addr 0
 readerprog beep    --port COM3 --addr 0
 readerprog watch   --port COM3 --addr 0                  print card reads (Ctrl+C to stop)
+readerprog probe   --port COM3 --addr 0 --baud 9600      which OSDP commands the reader supports
 readerprog commands                                      list built-in and saved commands
 readerprog run Buzzer --set count=3 --port COM3 --addr 0  send a command from the library
 readerprog run mfg --set vendor=001112 --set payload=0102 --yes --port COM3 --addr 0

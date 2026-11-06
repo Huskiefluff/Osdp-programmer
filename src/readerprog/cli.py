@@ -209,6 +209,21 @@ def cmd_run(args) -> int:
     return 0 if reply.code != 0x41 else 1
 
 
+def cmd_probe(args) -> int:
+    from .osdp.probe import probe_commands, report
+
+    reader = Reader(_open_bus(args), args.addr)
+    header = f"Command support for the reader at address {args.addr} @ {args.baud} baud"
+    try:
+        dev = reader.identify()
+        header += (f"\nSerial {dev.serial_number}, firmware {dev.firmware}, "
+                   f"vendor code {dev.vendor_hex} ({dev.vendor_name})")
+    except OsdpError as exc:
+        raise OsdpError(f"Reader did not answer: {exc}") from exc
+    print(report(probe_commands(reader), header + "\n"))
+    return 0
+
+
 def cmd_vendor(args) -> int:
     from .osdp.decode import parse_hex
     from .osdp.vendors import vendor_name
@@ -284,6 +299,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_watch)
 
     sub.add_parser("commands", help="list built-in and saved commands").set_defaults(func=cmd_commands)
+
+    common(sub.add_parser("probe", help="check which OSDP commands the reader implements")).set_defaults(
+        func=cmd_probe)
 
     p = sub.add_parser("vendor", help="look up who owns an OSDP vendor code, e.g. vendor 00-11-12")
     p.add_argument("code", help="3-byte vendor code as shown by 'info'")

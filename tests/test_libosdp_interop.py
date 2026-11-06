@@ -12,6 +12,7 @@ import pytest
 osdp = pytest.importorskip("osdp")
 
 from readerprog import programmer as P  # noqa: E402
+from readerprog.osdp import constants as C  # noqa: E402
 from readerprog.osdp.cp import Bus, Reader  # noqa: E402
 from readerprog.sim import SimulatedReader, h10301_bits  # noqa: E402
 
@@ -185,3 +186,14 @@ def test_output_text_and_mfg_reach_libosdp(libosdp_pd):
     cmd = pd.get_command(timeout=2)
     assert cmd["command"] == osdp.Command.Manufacturer and cmd["data"] == b"\x01\x02"
     assert cmd["vendor_code"].to_bytes(3, "little") == bytes([0x00, 0x11, 0x12])
+
+
+def test_command_probe_against_libosdp(libosdp_pd):
+    from readerprog.osdp.probe import NOT_SUPPORTED, SUPPORTED, probe_commands
+
+    pd, bus = libosdp_pd
+    status = {r.code: r.status for r in probe_commands(Reader(bus, 5, timeout=0.5))}
+    for code in (C.CMD_POLL, C.CMD_ID, C.CMD_CAP, C.CMD_LED, C.CMD_BUZ, C.CMD_OUT, C.CMD_TEXT, C.CMD_MFG):
+        assert status[code] == SUPPORTED, C.command_name(code)
+    for code in (C.CMD_ISTAT, C.CMD_BIOREAD, C.CMD_XWR, C.CMD_PIVDATA):
+        assert status[code] == NOT_SUPPORTED, C.command_name(code)

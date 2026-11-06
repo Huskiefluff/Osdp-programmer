@@ -185,9 +185,13 @@ class SimulatedReader:
         if code == C.CMD_RSTAT:
             return self._reply(pkt, C.REPLY_RSTATR, bytes([0]))
         if code == C.CMD_LED:
+            if len(data) < 14 or len(data) % 14:
+                return self._nak(pkt, 0x02)
             self.last_led = data
             return self._reply(pkt, C.REPLY_ACK)
         if code == C.CMD_BUZ:
+            if len(data) < 5:
+                return self._nak(pkt, 0x02)
             self.beeps += 1
             return self._reply(pkt, C.REPLY_ACK)
         if code == C.CMD_COMSET:
@@ -242,7 +246,9 @@ class SimulatedReader:
         if code == C.CMD_MFG:
             # The simulator only understands its own (fake) vendor code and simply
             # echoes the payload back, like a manufacturer "ping".
-            if len(data) >= 3 and bytes(data[:3]) == SIM_VENDOR:
+            if len(data) < 3:
+                return self._nak(pkt, 0x02)
+            if bytes(data[:3]) == SIM_VENDOR:
                 self.mfg_received.append(bytes(data[3:]))
                 return self._reply(pkt, C.REPLY_MFGREP, SIM_VENDOR + bytes(data[3:]))
             return self._nak(pkt, 0x03)

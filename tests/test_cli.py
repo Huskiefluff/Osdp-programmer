@@ -53,3 +53,10 @@ def test_cli_vendor_lookup(capsys):
     assert main(["vendor", "00:06:8e"]) == 0
     assert "HID" in capsys.readouterr().out
     assert main(["vendor", "0011"]) == 2
+
+
+def test_cli_probe(capsys):
+    assert main(["probe", "--simulate"]) == 0
+    out = capsys.readouterr().out
+    assert "osdp_XWR" in out and "not supported" in out and "Supported: osdp_POLL" in out
+    assert main(["probe", "--simulate", "--addr", "9"]) == 2
